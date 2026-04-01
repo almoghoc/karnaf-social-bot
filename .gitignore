@@ -1,0 +1,8 @@
+.env
+.browser_data/
+screenshots/
+data/
+__pycache__/
+*.pyc
+bot.log
+nohup.out

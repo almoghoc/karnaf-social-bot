@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "api/**/*.py", "use": "@vercel/python" }
+  ],
+  "routes": [
+    { "src": "/api/webhook", "dest": "/api/webhook.py" },
+    { "src": "/api/cron_post", "dest": "/api/cron_post.py" },
+    { "src": "/api/cron_comment", "dest": "/api/cron_comment.py" },
+    { "src": "/api/make_callback", "dest": "/api/make_callback.py" }
+  ],
+  "crons": [
+    { "path": "/api/cron_post", "schedule": "0 9 */2 * *" },
+    { "path": "/api/cron_comment", "schedule": "0 14 * * *" }
+  ]
+}
