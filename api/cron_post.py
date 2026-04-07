@@ -1,17 +1,16 @@
-"""Vercel Cron: Auto post job — runs every 48 hours."""
+"""Vercel Cron: Auto post job — runs every 48 hours.
+Scans all sources, scores articles, sends top 3 to Telegram for selection."""
 import asyncio
 import json
 import os
 import sys
 from http.server import BaseHTTPRequestHandler
 
-# Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib.news import fetch_latest_news, pick_hottest
-from lib.engine import generate_content
-from lib.state import is_article_processed, set_pending_post
-from lib.keyboards import auto_post_keyboard
+from lib.news import fetch_latest_news, pick_top_articles
+from lib.state import is_article_processed, set_scored_articles
+from lib.keyboards import article_select_keyboard
 from lib.telegram_api import send_message
 
 MY_CHAT_ID = os.environ.get("MY_CHAT_ID", "")
@@ -24,46 +23,41 @@ async def _run_auto_post():
     if not articles:
         return {"status": "no_articles"}
 
-    hottest = pick_hottest(articles)
-    if not hottest:
-        return {"status": "no_hottest"}
+    top = pick_top_articles(articles, count=3)
+    if not top:
+        return {"status": "no_scored"}
 
-    # Generate post
-    draft = generate_content(
-        f"כותרת: {hottest['title']}\nתקציר: {hottest['summary']}\nמקור: {hottest['source']}",
-        context_type="auto_post",
-    )
-    full_post = f"{draft.rstrip()}\n\n🔗 {hottest['link']}"
+    set_scored_articles(top)
 
-    # Save pending post
-    set_pending_post({
-        "draft": full_post,
-        "article": hottest,
-    })
+    # Build BLUF summary
+    lines = "🦏 *סריקה אוטומטית — Top 3:*\n\n"
+    for i, a in enumerate(top):
+        score = a.get("score", {})
+        medal = "🥇🥈🥉"[i] if i < 3 else "📰"
+        lines += (
+            f"{medal} *{a['title']}*\n"
+            f"_{a['source']}_\n"
+            f"💡 {score.get('why', '')}\n"
+            f"📊 ציון: *{score.get('total', '?')}* "
+            f"(מחלוקת:{score.get('controversy', '?')} "
+            f"תועלת:{score.get('financial_utility', '?')} "
+            f"הוכחה:{score.get('social_proof', '?')} "
+            f"דחיפות:{score.get('urgency', '?')})\n\n"
+        )
 
-    # Send to Telegram
-    msg = (
-        f"📰 *{hottest['title']}*\n"
-        f"_{hottest['source']}_ | {hottest['link']}\n\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"📝 *הפוסט המוכן לפרסום:*\n\n"
-        f"{full_post}\n"
-        f"━━━━━━━━━━━━━━━\n\n"
-        f"👆 לחץ *אשר* לפרסום בדף + קבוצות"
-    )
+    lines += "👆 בחר כתבה לייצור תוכן"
 
     await send_message(
-        MY_CHAT_ID, msg,
-        reply_markup=auto_post_keyboard(),
+        MY_CHAT_ID, lines,
+        reply_markup=article_select_keyboard(top),
         disable_web_page_preview=True,
     )
 
-    return {"status": "sent", "title": hottest["title"]}
+    return {"status": "sent", "count": len(top), "titles": [a["title"] for a in top]}
 
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        # Verify cron secret
         auth = self.headers.get("Authorization", "")
         cron_secret = os.environ.get("CRON_SECRET", "")
         if cron_secret and auth != f"Bearer {cron_secret}":

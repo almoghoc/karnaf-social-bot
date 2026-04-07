@@ -67,3 +67,61 @@ def set_pending_comment(comment_data: dict):
 
 def clear_pending_comment():
     _redis_cmd("DEL", "pending_comment")
+
+
+# --- Multi-platform pending ---
+
+def set_pending_platforms(data: dict):
+    """Store generated content for all platforms pending approval."""
+    _redis_cmd("SET", "pending_platforms", json.dumps(data, ensure_ascii=False))
+
+
+def get_pending_platforms():
+    data = _redis_cmd("GET", "pending_platforms")
+    return json.loads(data) if data else None
+
+
+def clear_pending_platforms():
+    _redis_cmd("DEL", "pending_platforms")
+
+
+# --- Scored articles cache (for article selection flow) ---
+
+def set_scored_articles(articles: list):
+    _redis_cmd("SET", "scored_articles", json.dumps(articles, ensure_ascii=False))
+    _redis_cmd("EXPIRE", "scored_articles", 3600)  # 1 hour TTL
+
+
+def get_scored_articles():
+    data = _redis_cmd("GET", "scored_articles")
+    return json.loads(data) if data else None
+
+
+def clear_scored_articles():
+    _redis_cmd("DEL", "scored_articles")
+
+
+# --- Content Bank ---
+
+def save_to_content_bank(entry: dict):
+    """Save published content to content bank for history."""
+    import time
+    entry["published_at"] = int(time.time())
+    key = f"content_bank:{entry['published_at']}"
+    _redis_cmd("SET", key, json.dumps(entry, ensure_ascii=False))
+    _redis_cmd("LPUSH", "content_bank_index", key)
+    # Keep last 100 entries
+    _redis_cmd("LTRIM", "content_bank_index", 0, 99)
+
+
+def get_content_bank(count: int = 10) -> list:
+    """Get recent content bank entries."""
+    keys = _redis_cmd("LRANGE", "content_bank_index", 0, count - 1)
+    if not keys:
+        return []
+    entries = []
+    for key in keys:
+        data = _redis_cmd("GET", key)
+        if data:
+            entries.append(json.loads(data))
+    return entries

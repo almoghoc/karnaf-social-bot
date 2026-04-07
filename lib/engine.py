@@ -1,5 +1,6 @@
 """Gemini LLM content generation — serverless version."""
 import os
+import json
 import google.generativeai as genai
 
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
@@ -18,23 +19,94 @@ SYSTEM_PROMPT = """
 אתה לא מתנשא אבל גם לא מחמיא סתם. אתה מביא ערך אמיתי.
 """.strip()
 
+SCORING_PROMPT = """אתה מנתח כתבות נדל"ן. דרג כל כתבה על 4 וקטורים (ציון 1-10):
+
+1. controversy — האם הכתבה מאתגרת דעה רווחת? (למשל "המחירים לא יירדו", "המשכנתא לא כדאית")
+2. financial_utility — האם יש בה מידע פיננסי פרקטי? (ROI, מס, משכנתא, תשואות, מספרים קונקרטיים)
+3. social_proof — האם היא מזכירה אזורים חמים, עסקאות גדולות, שמות מוכרים, מספרים מרשימים?
+4. urgency — האם יש אלמנט של דחיפות? (מכרז מוגבל, שינוי ריבית, חלון הזדמנויות שנסגר)
+
+החזר JSON בלבד, בלי שום טקסט נוסף. פורמט:
+[{"index": 0, "controversy": 5, "financial_utility": 8, "social_proof": 3, "urgency": 7, "total": 23, "why": "סיבה קצרה"}, ...]
+
+דרג את הכתבות הבאות:
+"""
+
 CONTEXT_PROMPTS = {
     "post": "הפוך את התוכן הבא לפוסט פייסבוק מושך. כתוב כמו פוסט אישי-מקצועי, לא כמו מודעה. הוסף שאלה מעוררת חשיבה בסוף.",
     "comment": "כתוב תגובה קצרה, חכמה ומוסיפת ערך. לא ספאם, לא פרסומת. תגובה שמישהו ירצה ללחוץ לייק עליה. 2-3 משפטים מקסימום.",
     "analysis": "כתוב ניתוח קצר וחד של הידיעה הבאה מנקודת המבט של משקיע נדל\"ן מנוסה. הסבר מה זה אומר בפועל למי שרוצה לקנות/למכור/להשקיע.",
-    "auto_post": """קיבלת כתבת חדשות על נדל"ן ישראלי. כתוב פוסט פייסבוק בסגנון "קרנף נדל"ן" שמנתח את הכתבה.
 
-הדרישות:
-- פתיחה חזקה: תובנה, עמדה או שאלה פרובוקטיבית שקשורה לכתבה
-- ניתוח מקצועי: מה זה אומר בפועל למשקיעים/קונים/מוכרים בישראל
-- ערך מוסף: מספרים, השוואות, זווית שלא בכתבה
-- סיום עם שאלה שמעוררת תגובות ודיון
-- 4-8 משפטים. לא יותר. כל משפט בשורה חדשה.
+    # === Facebook — PAS Framework (Problem, Agitation, Solution) ===
+    "facebook_post": """קיבלת כתבת חדשות על נדל"ן ישראלי. כתוב פוסט פייסבוק בסגנון "קרנף נדל"ן" לפי מבנה P.A.S:
+
+1. Problem — פתח עם הבעיה או הכאב שהכתבה חושפת (משפט אחד חד)
+2. Agitation — הגבר את הכאב: מה ההשלכות? למה זה אמור להדאיג? מספרים קונקרטיים.
+3. Solution — מה צריך לעשות בפועל? תובנה מקצועית, לא סיסמא.
+
+דרישות:
+- 4-8 משפטים. כל משפט בשורה חדשה.
+- סיים עם שאלה פתוחה שמעוררת דיון (חובה — זה מה שמזיז את האלגוריתם)
 - לא לצטט ישירות מהכתבה — להגיד את זה במילים שלך
 - טון: ישיר, סמכותי, אנושי. כמו מישהו שחי ונושם נדל"ן.
 - אל תוסיף קישור — הקוד מוסיף אותו אחר כך
-- בסוף הפוסט הוסף 3-5 hashtags רלוונטיים: #נדלן #השקעות #שוקהדיור #קרנףנדלן וכו'
+- 3-5 hashtags בסוף: #נדלן #השקעות #שוקהדיור #קרנףנדלן וכו'
 - אל תכתוב "קרנף נדל"ן" בתוך הפוסט — זה כבר שם העמוד""",
+
+    # === Telegram — Bullet-Point Flash News ===
+    "telegram_post": """קיבלת כתבת חדשות על נדל"ן ישראלי. כתוב הודעת טלגרם קצרה בסגנון "Flash News":
+
+פורמט:
+🔴 כותרת חדה (עד 7 מילים)
+
+• נקודה מרכזית 1
+• נקודה מרכזית 2
+• נקודה מרכזית 3
+
+💡 שורת תחתית — מה זה אומר בפועל למשקיע/קונה
+
+דרישות:
+- קצר ופאנצ'י. מקסימום 5-6 שורות.
+- "Information Gap" — תן מספיק כדי לעורר סקרנות, לא הכל
+- אל תוסיף קישור — הקוד מוסיף אותו אחר כך
+- בלי hashtags (טלגרם לא צריך)
+- בלי אימוג'ים מיותרים מעבר למה שבפורמט""",
+
+    # === Instagram — AIDA Framework ===
+    "instagram_caption": """קיבלת כתבת חדשות על נדל"ן ישראלי. כתוב תוכן לאינסטגרם בשני חלקים:
+
+חלק 1 — HOOK (כותרת לגרפיקה):
+כתוב כותרת של עד 7 מילים שתופסת את העין. חדה, פרובוקטיבית, עם מספר אם אפשר.
+סמן אותה בשורה נפרדת עם תג [HOOK]:
+
+חלק 2 — CAPTION (טקסט מתחת לפוסט):
+כתוב לפי מבנה A.I.D.A:
+- Attention: משפט פתיחה שעוצר את הסקרול
+- Interest: עובדה או מספר מפתיע מהכתבה
+- Desire: מה אפשר להרוויח/להפסיד מזה
+- Action: CTA — "שמרו את הפוסט", "תייגו מישהו שחייב לדעת", "עקבו לעוד תוכן כזה"
+
+דרישות:
+- קפשן של 3-5 משפטים
+- 5-8 hashtags רלוונטיים (כולל #נדלן #השקעות #קרנףנדלן)
+- אל תכתוב "קרנף נדל"ן" בתוך הטקסט""",
+
+    # === Legacy: auto_post (backward compat, now maps to facebook_post) ===
+    "auto_post": """קיבלת כתבת חדשות על נדל"ן ישראלי. כתוב פוסט פייסבוק בסגנון "קרנף נדל"ן" לפי מבנה P.A.S:
+
+1. Problem — פתח עם הבעיה או הכאב שהכתבה חושפת (משפט אחד חד)
+2. Agitation — הגבר את הכאב: מה ההשלכות? למה זה אמור להדאיג? מספרים קונקרטיים.
+3. Solution — מה צריך לעשות בפועל? תובנה מקצועית, לא סיסמא.
+
+דרישות:
+- 4-8 משפטים. כל משפט בשורה חדשה.
+- סיים עם שאלה פתוחה שמעוררת דיון
+- לא לצטט ישירות מהכתבה — להגיד את זה במילים שלך
+- טון: ישיר, סמכותי, אנושי. כמו מישהו שחי ונושם נדל"ן.
+- אל תוסיף קישור — הקוד מוסיף אותו אחר כך
+- 3-5 hashtags בסוף: #נדלן #השקעות #שוקהדיור #קרנףנדלן וכו'
+- אל תכתוב "קרנף נדל"ן" בתוך הפוסט — זה כבר שם העמוד""",
+
     "viral_comment": """קיבלת פוסט ויראלי מקבוצת נדל"ן בפייסבוק. כתוב תגובה בסגנון "קרנף נדל"ן".
 הדרישות:
 - תגובה של 1-3 משפטים בלבד
@@ -44,6 +116,7 @@ CONTEXT_PROMPTS = {
 - לא קישורים ולא הפניות ישירות
 - מראה מומחיות שגורמת לאנשים ללחוץ על הפרופיל מסקרנות
 - תואמת לחוקי Meta — אף פעם לא self-promotion ישירה""",
+
     "trending_post": """כתוב פוסט פייסבוק מקצועי בסגנון "קרנף נדל"ן" על נושא חם בשוק הנדל"ן הישראלי.
 
 הדרישות:
@@ -70,20 +143,50 @@ def generate_content(raw_input: str, context_type: str = "post") -> str:
     return response.text
 
 
-def rank_articles(articles: list) -> int:
+def score_articles(articles: list) -> list:
+    """Score articles on 4 engagement vectors. Returns sorted list with scores."""
     if not articles:
-        return 0
-    titles = "\n".join(f"{i}. {a['title']} ({a['source']})" for i, a in enumerate(articles))
-    prompt = f"""דרג את הכתבות הבאות לפי פוטנציאל ויראלי ורלוונטיות לקהל משקיעי נדל"ן ישראלי.
-החזר רק את המספר (אינדקס) של הכתבה הכי מעניינת. רק את המספר, בלי שום טקסט נוסף.
-
-הכתבות:
-{titles}"""
+        return []
+    titles = "\n".join(
+        f"{i}. {a['title']} ({a['source']}): {a.get('summary', '')[:100]}"
+        for i, a in enumerate(articles)
+    )
+    prompt = f"{SCORING_PROMPT}\n{titles}"
     response = model.generate_content(prompt)
     try:
-        idx = int(response.text.strip())
-        if 0 <= idx < len(articles):
-            return idx
-    except ValueError:
-        pass
+        text = response.text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+        scores = json.loads(text)
+        for s in scores:
+            idx = s["index"]
+            if 0 <= idx < len(articles):
+                articles[idx]["score"] = s
+        scored = [a for a in articles if "score" in a]
+        scored.sort(key=lambda a: a["score"]["total"], reverse=True)
+        return scored
+    except (json.JSONDecodeError, KeyError, IndexError):
+        for a in articles:
+            a["score"] = {"controversy": 5, "financial_utility": 5, "social_proof": 5, "urgency": 5, "total": 20, "why": "דירוג אוטומטי"}
+        return articles
+
+
+def rank_articles(articles: list) -> int:
+    """Legacy compat — returns index of hottest article."""
+    scored = score_articles(articles)
+    if not scored:
+        return 0
+    best_title = scored[0]["title"]
+    for i, a in enumerate(articles):
+        if a["title"] == best_title:
+            return i
     return 0
+
+
+def generate_all_platforms(raw_input: str) -> dict:
+    """Generate content for all 3 platforms from the same source material."""
+    return {
+        "facebook": generate_content(raw_input, "facebook_post"),
+        "telegram": generate_content(raw_input, "telegram_post"),
+        "instagram": generate_content(raw_input, "instagram_caption"),
+    }
