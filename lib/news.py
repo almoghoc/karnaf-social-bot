@@ -24,19 +24,33 @@ HTML_SOURCES = [
     },
 ]
 
-REALESTATE_KEYWORDS = [
-    "נדל\"ן", "נדלן", "דירה", "דירות", "משכנתא", "שכירות", "פינוי בינוי",
-    "תמ\"א", "תמא", "מחירי דיור", "בנייה", "קבלן", "יזם", "יזמות",
-    "התחדשות עירונית", "ריבית", "פריים", "מינוף", "תשואה", "קרקע",
-    "מגרש", "תיווך", "מתווך", "השקעה", "השקעות", "בניין", "דיור",
-    "מחיר למשתכן", "רכישה", "מכירה", "שוק הדיור", "מדד תשומות",
-    "הון עצמי", "LTV", "משכנתה", "רוכשים", "קונים", "מוכרים",
+# Strong keywords — one match is enough
+STRONG_KEYWORDS = [
+    "נדל\"ן", "נדלן", "דירה", "דירות", "משכנתא", "משכנתה", "פינוי בינוי",
+    "תמ\"א", "תמא", "מחירי דיור", "שוק הדיור", "מחיר למשתכן",
+    "התחדשות עירונית", "קבלן", "תיווך", "מתווך", "LTV",
+    "מדד תשומות", "זכויות בנייה", "טאבו", "רישום מקרקעין",
 ]
+
+# Weak keywords — need 2+ matches or 1 weak + context from title
+WEAK_KEYWORDS = [
+    "שכירות", "בנייה", "יזם", "יזמות", "ריבית", "פריים", "מינוף",
+    "תשואה", "קרקע", "מגרש", "השקעה", "השקעות", "בניין", "דיור",
+    "רכישה", "מכירה", "הון עצמי", "רוכשים", "קונים", "מוכרים",
+]
+
+ALL_KEYWORDS = STRONG_KEYWORDS + WEAK_KEYWORDS
+REALESTATE_KEYWORDS = ALL_KEYWORDS  # backward compat
 
 
 def _is_realestate(title: str, summary: str) -> bool:
     text = f"{title} {summary}".lower()
-    return any(kw in text for kw in REALESTATE_KEYWORDS)
+    # One strong keyword is enough
+    if any(kw in text for kw in STRONG_KEYWORDS):
+        return True
+    # For weak keywords, need at least 2 matches
+    weak_count = sum(1 for kw in WEAK_KEYWORDS if kw in text)
+    return weak_count >= 2
 
 
 def _fetch_html_articles(source: dict, max_items: int = 5) -> list:
